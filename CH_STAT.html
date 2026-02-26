@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>채널 통계 관리자 시스템</title>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import {
+  getFirestore, collection, addDoc, onSnapshot,
+  query, orderBy, updateDoc, doc,
+  deleteDoc, getDocs
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+/* 🔥 Firebase 설정 */
+const firebaseConfig = {
+  apiKey: "AIzaSyBpfdrOZh7Jo1nFABHqOhkhl_Id_DYNueU",
+  authDomain: "channel-statistics-275ba.firebaseapp.com",
+  projectId: "channel-statistics-275ba",
+  storageBucket: "channel-statistics-275ba.firebasestorage.app",
+  messagingSenderId: "85099988183",
+  appId: "1:85099988183:web:fae23a9b13c6fa4de25c92"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+let mainTab = "tigerTheater";
+let statChannel = "all";
+let allData = [];
+let unsubscribe = null;
+
+/* =========================
+   메인 탭 전환
+========================= */
+window.switchMainTab = function(tab){
+  mainTab = tab;
+
+  document.querySelectorAll(".main-tab").forEach(t=>t.classList.remove("active"));
+  document.getElementById(tab+"Tab").classList.add("active");
+
+  if(unsubscribe) unsubscribe();
+
+  if(tab==="dbStats"){
+    document.getElementById("bulkArea").style.display="none";
+    document.getElementById("statTabs").style.display="block";
+    loadStats();
+  } else {
+    document.getElementById("bulkArea").style.display="block";
+    document.getElementById("statTabs").style.display="none";
+    loadData();
+  }
+};
+
+/* =========================
+   일반 데이터 로드
+========================= */
+function loadData(){
+  const q = query(collection(db,mainTab), orderBy("no"));
+  unsubscribe = onSnapshot(q, snap=>{
+    allData = snap.docs.map(d=>({id:d.id,...d.data()}));
+    renderTable();
+  });
+}
+
+/* =========================
+   DB통계 데이터 로드
+========================= */
+function loadStats(){
+  const cols=["tigerTheater","moneyFlow","holeInOne","stockTalk"];
+  allData=[];
+  cols.forEach(c=>{
+    onSnapshot(collection(db,c), snap=>{
+      snap.docs.forEach(d=>{
+        allData.push({...d.data(), source:c});
+      });
+      renderStatsTable();
+    });
+  });
+}
+
+/* =========================
+   2차 채널 필터
+========================= */
+window.switchStatChannel=function(ch){
+  statChannel=ch;
+  document.querySelectorAll(".stat-tab").forEach(t=>t.classList.remove("active"));
+  document.getElementById("stat_"+ch).classList.add("active");
+  renderStatsTable();
+};
+
+/* =========================
+   일괄 입력
+========================= */
+window.bulkInsert = async function(){
+  const text=document.getElementById("bulk").value.trim();
+  if(!text) return;
+
+  const lines=text.split("\n");
+  let startNo=allData.length+1;
+
+  for(let line of lines){
+    const c=line.split("\t");
+
+    let data={
+      no:startNo++,
+      channel:c[1],
+      date:c[2],
+      time:c[3],
+      phone:c[4]||c[5],
+      memo:c[5]||c[6],
+      manager:c[6]||c[7],
+      registered:false,
+      memberName:"",
+      category:"",
+      contractType:"",
+      contractAmount:0,
+      upsell:false,
+      upsellType:"",
+      upsellAmount:0
+    };
+
+    if(mainTab==="holeInOne")
+      data.applicant=c[4];
+
+    await addDoc(collection(db,mainTab),data);
+  }
+
+  document.getElementById("bulk").value="";
+};
+
+/* =========================
+   전체 삭제
+========================= */
+window.deleteAll = async function(){
+  if(!confirm("현재 탭 데이터를 모두 삭제하시겠습니까?")) return;
+  const snap=await getDocs(collection(db,mainTab));
+  for(const d of snap.docs)
+    await deleteDoc(doc(db,mainTab,d.id));
+};
+
+/* =========================
+   셀 수정 기능
+========================= */
+function editable(td, field, id){
+  td.ondblclick=function(){
+    const old=td.innerText;
+    td.innerHTML=`<input value="${old}" style="width:100%">`;
+    const input=td.firstChild;
+    input.focus();
+
+    input.onblur=async function(){
+      let val=input.value;
+
+      if(field==="contractAmount"||field==="upsellAmount")
+        val=Number(val.replace(/,/g,""))||0;
+
+      if(field==="registered"||field==="upsell")
+        val=(val==="O");
+
+      await updateDoc(doc(db,mainTab,id),{[field]:val});
+      td.innerText=(val===true)?"O":(val||"");
+    };
+  };
+}
+
+/* =========================
+   헤더 렌더
+========================= */
+function renderHeader(){
+  const thead=document.getElementById("thead");
+
+  if(mainTab==="tigerTheater"){
+    thead.innerHTML=`
+    <tr>
+    <th>번호</th><th>채널명</th><th>날짜</th><th>시간</th>
+    <th>휴대전화</th><th>메모</th><th>담당자</th>
+    <th>회원 등록 여부</th><th>회원명</th><th>분류</th>
+    <th>계약분류</th><th>계약 금액</th>
+    <th>업셀 전환 여부</th><th>업셀 계약분류</th><th>업셀 계약 금액</th>
+    </tr>`;
+  }
+
+  if(mainTab==="holeInOne"){
+    thead.innerHTML=`
+    <tr>
+    <th>번호</th><th>채널명</th><th>날짜</th><th>시간</th>
+    <th>신청자 성함</th><th>휴대전화</th><th>메모</th><th>담당자</th>
+    <th>회원 등록 여부</th><th>회원명</th><th>분류</th>
+    <th>계약분류</th><th>계약 금액</th>
+    <th>업셀 전환 여부</th><th>업셀 계약분류</th><th>업셀 계약 금액</th>
+    </tr>`;
+  }
+
+  if(mainTab==="dbStats"){
+    thead.innerHTML=`
+    <tr>
+    <th>채널</th><th>날짜</th><th>전화번호</th>
+    <th>등록</th><th>계약금</th>
+    <th>업셀</th><th>업셀금</th>
+    </tr>`;
+  }
+}
+
+/* =========================
+   일반 테이블 렌더
+========================= */
+function renderTable(){
+  renderHeader();
+  const tbody=document.getElementById("tbody");
+  tbody.innerHTML="";
+
+  allData.forEach(d=>{
+    const row=document.createElement("tr");
+
+    function add(val,field){
+      const td=document.createElement("td");
+      td.innerText=val||"";
+      editable(td,field,d.id);
+      row.appendChild(td);
+    }
+
+    add(d.no,"no");
+    add(d.channel,"channel");
+    add(d.date,"date");
+    add(d.time,"time");
+
+    if(mainTab==="holeInOne")
+      add(d.applicant,"applicant");
+
+    add(d.phone,"phone");
+    add(d.memo,"memo");
+    add(d.manager,"manager");
+    add(d.registered?"O":"","registered");
+    add(d.memberName,"memberName");
+    add(d.category,"category");
+    add(d.contractType,"contractType");
+    add((d.contractAmount||0).toLocaleString(),"contractAmount");
+    add(d.upsell?"O":"","upsell");
+    add(d.upsellType,"upsellType");
+    add((d.upsellAmount||0).toLocaleString(),"upsellAmount");
+
+    tbody.appendChild(row);
+  });
+}
+
+/* =========================
+   통계 테이블 렌더
+========================= */
+function renderStatsTable(){
+  renderHeader();
+  const tbody=document.getElementById("tbody");
+  tbody.innerHTML="";
+
+  let data=allData;
+
+  if(statChannel!=="all")
+    data=data.filter(d=>d.channel===statChannel);
+
+  data.forEach(d=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML=`
+    <td>${d.channel||""}</td>
+    <td>${d.date||""}</td>
+    <td>${d.phone||""}</td>
+    <td>${d.registered?"O":""}</td>
+    <td>${(d.contractAmount||0).toLocaleString()}</td>
+    <td>${d.upsell?"O":""}</td>
+    <td>${(d.upsellAmount||0).toLocaleString()}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+window.onload=()=>switchMainTab("tigerTheater");
+
+</script>
+
+<style>
+body{font-family:sans-serif;padding:30px;background:#f4f6f9;}
+.main-tab,.stat-tab{
+display:inline-block;padding:10px 15px;margin-right:5px;
+border-radius:8px;cursor:pointer;color:white;
+}
+.main-tab{background:#777;}
+.main-tab.active{background:black;}
+
+#statTabs{margin:15px 0;display:none;}
+.stat-tab{font-weight:bold;}
+#stat_all{background:#333;}
+#stat_호랑이극장{background:#e74c3c;}
+#stat_돈의흐름{background:#e67e22;}
+#stat_주식홀인원{background:#3498db;}
+#stat_주식톡톡{background:#2ecc71;}
+.stat-tab.active{outline:3px solid #000;}
+
+.card{background:white;padding:20px;margin-bottom:20px;border-radius:10px;}
+
+.table-wrap{overflow-x:auto;}
+table{min-width:2000px;border-collapse:collapse;background:white;}
+th,td{border:1px solid #ddd;padding:6px;text-align:center;}
+
+textarea{width:100%;height:120px;}
+button{padding:6px 12px;margin-top:5px;}
+</style>
+</head>
+
+<body>
+
+<h1>채널 통계 관리자</h1>
+
+<div>
+  <div class="main-tab active" id="tigerTheaterTab" onclick="switchMainTab('tigerTheater')">호랑이극장</div>
+  <div class="main-tab" id="holeInOneTab" onclick="switchMainTab('holeInOne')">주식홀인원</div>
+  <div class="main-tab" id="dbStatsTab" onclick="switchMainTab('dbStats')">DB통계</div>
+</div>
+
+<div id="statTabs">
+  <div class="stat-tab active" id="stat_all" onclick="switchStatChannel('all')">모두보기</div>
+  <div class="stat-tab" id="stat_호랑이극장" onclick="switchStatChannel('호랑이극장')">호랑이극장</div>
+  <div class="stat-tab" id="stat_돈의흐름" onclick="switchStatChannel('돈의흐름')">돈의흐름</div>
+  <div class="stat-tab" id="stat_주식홀인원" onclick="switchStatChannel('주식홀인원')">주식홀인원</div>
+  <div class="stat-tab" id="stat_주식톡톡" onclick="switchStatChannel('주식톡톡')">주식톡톡</div>
+</div>
+
+<div class="card" id="bulkArea">
+  <h3>일괄 붙여넣기</h3>
+  <textarea id="bulk"></textarea><br>
+  <button onclick="bulkInsert()">입력</button>
+  <button onclick="deleteAll()">전체 삭제</button>
+</div>
+
+<div class="table-wrap">
+<table>
+<thead id="thead"></thead>
+<tbody id="tbody"></tbody>
+</table>
+</div>
+
+</body>
+</html>
